@@ -1,0 +1,338 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from backend import agent_profiles
+from backend.agent_core import MiniAgent
+
+
+class FakeStreamingLlm(object):
+    def __init__(self, first_response, final_chunks=None):
+        self.first_response = first_response
+        self.final_chunks = final_chunks or []
+        self.calls = []
+
+    def chat(self, messages, tools=None, stream=False, include_reasoning=False):
+        self.calls.append({
+            "tools": tools,
+            "stream": stream,
+            "include_reasoning": include_reasoning,
+        })
+        if stream:
+            return iter(self.final_chunks)
+        return self.first_response
+
+
+class AgentBoundaryTest(unittest.TestCase):
+    def setUp(self):
+        self._old_project_agents_dir = agent_profiles.PROJECT_AGENTS_DIR
+        self._old_user_agents_dir = agent_profiles.USER_AGENTS_DIR
+        self._old_enable_user_agents = os.environ.pop("KMAI_ENABLE_USER_AGENTS", None)
+
+    def tearDown(self):
+        agent_profiles.PROJECT_AGENTS_DIR = self._old_project_agents_dir
+        agent_profiles.USER_AGENTS_DIR = self._old_user_agents_dir
+        if self._old_enable_user_agents is None:
+            os.environ.pop("KMAI_ENABLE_USER_AGENTS", None)
+        else:
+            os.environ["KMAI_ENABLE_USER_AGENTS"] = self._old_enable_user_agents
+
+    def test_resolve_agent_profile_marks_unknown_agent_without_silent_fallback(self):
+        with tempfile.TemporaryDirectory() as project_dir:
+            agent_profiles.PROJECT_AGENTS_DIR = project_dir
+
+            profile, found = agent_profiles.resolve_agent_profile("missing-agent")
+
+        self.assertFalse(found)
+        self.assertEqual("default", profile["id"])
+        self.assertEqual("missing-agent", profile["requested_agent_id"])
+
+    def test_stream_chat_without_llm_uses_process_auto_override_before_keyword_fallback(self):
+        with tempfile.TemporaryDirectory() as project_dir:
+            Path(project_dir, "process-auto-generate-agent.md").write_text(
+                "Process auto prompt", encoding="utf-8"
+            )
+            agent_profiles.PROJECT_AGENTS_DIR = project_dir
+            agent = MiniAgent()
+            agent.llm = None
+            calls = []
+
+            def fake_execute_tool(name, args):
+                calls.append((name, args))
+                return {"status": "success", "payload": {"ok": True}}
+
+            agent._execute_tool = fake_execute_tool
+
+            events = list(agent.stream_chat(
+                "进行AI工艺推理",
+                session_id="test-session",
+                agent_id="process-auto-generate-agent",
+            ))
+
+        self.assertEqual([("get_ai_process_route_input", {})], calls)
+        self.assertEqual("status", events[0]["type"])
+        self.assertEqual("正在理解问题...", events[0]["text"])
+        self.assertEqual("tool_call", events[1]["type"])
+        self.assertEqual("get_ai_process_route_input", events[1]["tool"])
+        self.assertEqual("content", events[2]["type"])
+        self.assertIn('"ok": true', events[2]["text"])
+
+    def test_default_chat_with_llm_routes_direct_keyword_before_model(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm({
+            "choices": [{
+                "message": {"role": "assistant", "content": "LLM decided no tool"},
+                "finish_reason": "stop",
+            }]
+        })
+        direct_tool_calls = []
+
+        def fake_tool(function_name, params=None, timeout=None):
+            direct_tool_calls.append((function_name, params, timeout))
+            return {"status": "success", "tool": function_name}
+
+        agent.tool = fake_tool
+
+        result = agent.chat(
+            "\u8bfb\u53d6BOF",
+            session_id="default-llm-keyword",
+            agent_id="default",
+        )
+
+        self.assertEqual(0, len(agent.llm.calls))
+        self.assertEqual(1, len(direct_tool_calls))
+        self.assertEqual("get_all_bof_item", direct_tool_calls[0][0])
+        self.assertEqual("get_all_bof_item", result.get("tool"))
+
+    def test_default_stream_chat_with_llm_routes_explicit_bof_tree_question_before_model(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm({
+            "choices": [{
+                "message": {"role": "assistant", "content": "wrong tool decision"},
+                "finish_reason": "stop",
+            }]
+        })
+        direct_tool_calls = []
+
+        def fake_tool(function_name, params=None, timeout=None):
+            direct_tool_calls.append((function_name, params, timeout))
+            return {
+                "status": "success",
+                "tool": function_name,
+                "data": {
+                    "result": {
+                        "success": True,
+                        "data": {"sample.prt": {"A侧": {"端面": {}}}},
+                    }
+                },
+            }
+
+        agent.tool = fake_tool
+
+        events = list(agent.stream_chat(
+            "当前bof树结构是怎样的",
+            session_id="default-llm-bof-tree-question",
+            agent_id="default",
+        ))
+
+        self.assertEqual(0, len(agent.llm.calls))
+        self.assertEqual(1, len(direct_tool_calls))
+        self.assertEqual("get_all_bof_item", direct_tool_calls[0][0])
+        self.assertEqual("tool_call", events[1]["type"])
+        self.assertEqual("get_all_bof_item", events[1]["tool"])
+        self.assertEqual("content", events[2]["type"])
+        self.assertIn("BOF/特征树结构", events[2]["text"])
+
+    def test_default_stream_chat_without_llm_keeps_keyword_fallback(self):
+        agent = MiniAgent()
+        agent.llm = None
+        direct_tool_calls = []
+
+        def fake_tool(function_name, params=None, timeout=None):
+            direct_tool_calls.append((function_name, params, timeout))
+            return {"status": "success", "tool": function_name, "data": {}}
+
+        agent.tool = fake_tool
+
+        events = list(agent.stream_chat(
+            "璇诲彇BOF",
+            session_id="default-no-llm-keyword",
+            agent_id="default",
+        ))
+
+        self.assertEqual(1, len(direct_tool_calls))
+        self.assertEqual("get_all_bof_item", direct_tool_calls[0][0])
+        self.assertEqual("status", events[0]["type"])
+        self.assertEqual("tool_call", events[1]["type"])
+        self.assertEqual("get_all_bof_item", events[1]["tool"])
+        self.assertEqual("content", events[2]["type"])
+
+    def test_bof_tree_reply_preserves_hierarchy_instead_of_flat_feature_list(self):
+        result = {
+            "status": "success",
+            "data": {
+                "result": {
+                    "success": True,
+                    "data": {
+                        "taotong.prt": {
+                            "A侧": {
+                                "A侧": {
+                                    "端面": {
+                                        "端面": {
+                                            "轴端面2": {
+                                                "轴端面2": {
+                                                    "粗车": {"粗车": {}},
+                                                    "半精车": {"半精车": {}},
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+        }
+
+        reply = MiniAgent._format_bof_tree_reply(result)
+
+        self.assertIn("BOF/特征树结构", reply)
+        self.assertIn("taotong.prt", reply)
+        self.assertIn("└─ taotong.prt", reply)
+        self.assertIn("   └─ A侧", reply)
+        self.assertIn("      └─ 端面", reply)
+        self.assertIn("         └─ 轴端面2", reply)
+        self.assertIn("            ├─ 粗车", reply)
+        self.assertIn("            └─ 半精车", reply)
+        self.assertNotIn("特征节点共", reply)
+
+    def test_process_auto_agent_keeps_existing_bof_keyword_reply_shape(self):
+        with tempfile.TemporaryDirectory() as project_dir:
+            Path(project_dir, "process-auto-generate-agent.md").write_text(
+                "Process auto prompt", encoding="utf-8"
+            )
+            agent_profiles.PROJECT_AGENTS_DIR = project_dir
+            agent = MiniAgent()
+            agent.llm = None
+
+            def fake_tool(function_name, params=None, timeout=None):
+                return {
+                    "status": "success",
+                    "tool": function_name,
+                    "data": {
+                        "result": {
+                            "success": True,
+                            "data": {
+                                "taotong.prt": {
+                                    "A侧": {
+                                        "A侧": {
+                                            "端面": {
+                                                "端面": {
+                                                    "轴端面2": {
+                                                        "轴端面2": {
+                                                            "粗车": {"粗车": {}},
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+
+            agent.tool = fake_tool
+
+            events = list(agent.stream_chat(
+                "读取BOF",
+                session_id="process-auto-bof-keyword",
+                agent_id="process-auto-generate-agent",
+            ))
+
+        self.assertEqual("content", events[2]["type"])
+        self.assertIn("特征节点共", events[2]["text"])
+        self.assertNotIn("BOF/特征树结构", events[2]["text"])
+
+    def test_stream_chat_emits_status_before_tool_decision_and_final_content(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm(
+            {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "ignored first pass"},
+                    "finish_reason": "stop",
+                }]
+            },
+            final_chunks=[
+                {"content": "第一段", "reasoning_content": ""},
+                {"content": "第二段", "reasoning_content": ""},
+            ],
+        )
+
+        events = list(agent.stream_chat(
+            "你好",
+            session_id="status-session",
+            agent_id="default",
+        ))
+
+        self.assertEqual(
+            [
+                ("status", "正在理解问题..."),
+                ("status", "正在判断是否需要调用 3DMPS 工具..."),
+                ("status", "正在组织回复..."),
+                ("content", "第一段"),
+                ("content", "第二段"),
+            ],
+            [(event["type"], event.get("text", "")) for event in events],
+        )
+        self.assertEqual(False, agent.llm.calls[0]["stream"])
+        self.assertEqual(True, agent.llm.calls[1]["stream"])
+
+    def test_stream_chat_emits_status_before_executing_tool(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm(
+            {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_bof_tree",
+                                "arguments": "{}",
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }]
+            },
+            final_chunks=[{"content": "读取完成", "reasoning_content": ""}],
+        )
+        calls = []
+
+        def fake_execute_tool(name, args):
+            calls.append((name, args))
+            return {"status": "success", "data": {"items": []}}
+
+        agent._execute_tool = fake_execute_tool
+
+        events = list(agent.stream_chat(
+            "请根据当前上下文处理模型数据",
+            session_id="tool-status-session",
+            agent_id="default",
+        ))
+
+        self.assertEqual([("get_bof_tree", {})], calls)
+        self.assertEqual("正在读取 3DMPS 数据...", events[2]["text"])
+        self.assertEqual("tool_call", events[3]["type"])
+        self.assertEqual("正在组织回复...", events[4]["text"])
+        self.assertEqual("content", events[5]["type"])
+
+
+if __name__ == "__main__":
+    unittest.main()
