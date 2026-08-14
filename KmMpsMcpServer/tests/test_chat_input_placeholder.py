@@ -22,6 +22,8 @@ class ChatInputPlaceholderTest(unittest.TestCase):
 
         self.assertIn(f"dom.input.placeholder = '{EXPECTED_PLACEHOLDER}';", source)
         self.assertNotIn(OLD_PLACEHOLDER, source)
+        self.assertIn("state.currentAgentId === KMRAG_AGENT_ID", source)
+        self.assertIn("例如：查询公司的供应商准入流程", source)
 
 
 if __name__ == "__main__":

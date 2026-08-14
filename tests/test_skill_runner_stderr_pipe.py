@@ -17,6 +17,40 @@ if SERVER_ROOT not in sys.path:
 
 
 class SkillRunnerStderrPipeTests(unittest.TestCase):
+    def test_runner_applies_call_specific_environment_without_mutating_parent(self):
+        from skills.runner import SkillRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            script_path = os.path.join(temp_dir, "environment_skill.py")
+            with open(script_path, "w", encoding="utf-8") as fp:
+                fp.write(textwrap.dedent(
+                    """
+                    import json
+                    import os
+                    import sys
+
+                    sys.stdin.buffer.read()
+                    print(json.dumps({"value": os.environ.get("KMRAG_TEST_VALUE")}))
+                    """
+                ).lstrip())
+
+            runner = SkillRunner({
+                "name": "environment",
+                "tool_name": "environment_skill",
+                "command": sys.executable,
+                "args": [script_path],
+            })
+            previous = os.environ.pop("KMRAG_TEST_VALUE", None)
+            try:
+                self.assertEqual(
+                    {"value": "call-only"},
+                    runner.run({}, env_overrides={"KMRAG_TEST_VALUE": "call-only"}),
+                )
+                self.assertNotIn("KMRAG_TEST_VALUE", os.environ)
+            finally:
+                if previous is not None:
+                    os.environ["KMRAG_TEST_VALUE"] = previous
+
     def test_skill_with_large_stderr_still_returns_stdout_json(self):
         from skills.runner import SkillRunner
 

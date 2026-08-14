@@ -22,6 +22,22 @@ class RecordingPipe(object):
 
 
 class ToolAllowlistTests(unittest.TestCase):
+    def test_kmrag_tool_visibility_and_execution_are_isolated_by_agent(self):
+        from backend.agent_core import MiniAgent
+        from backend.tool_runtime import get_tools_for_agent
+
+        default_names = [tool["function"]["name"] for tool in get_tools_for_agent("default")]
+        kmrag_names = [tool["function"]["name"] for tool in get_tools_for_agent("kmrag-knowledge-agent")]
+        self.assertNotIn("kmrag_search", default_names)
+        self.assertEqual(["kmrag_search"], kmrag_names)
+
+        agent = MiniAgent()
+        agent.pipe = RecordingPipe()
+        result = agent._execute_tool(
+            "check_3dmps_status", {}, agent_id="kmrag-knowledge-agent"
+        )
+        self.assertEqual("TOOL_NOT_ALLOWED_FOR_AGENT", result.get("error_code"))
+        self.assertEqual([], agent.pipe.calls)
     def test_unregistered_tool_is_rejected_before_pipe_call(self):
         from backend.agent_core import MiniAgent
 

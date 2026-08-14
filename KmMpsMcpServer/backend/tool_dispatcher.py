@@ -21,7 +21,9 @@ from .tool_runtime import (
     TOOL_PIPE_TARGETS,
     SKILL_RUNNERS,
     get_timeout,
+    is_tool_allowed_for_agent,
 )
+from . import agent_config
 
 
 COMPOSITE_TOOL_NAMES = frozenset([
@@ -781,7 +783,7 @@ class ToolDispatcherMixin(object):
         }
         self._audit("apply_group_template_full_flow", params, start, payload, source=source)
         return payload
-    def _execute_tool_impl(self, function_name, params, timeout, source):
+    def _execute_tool_impl(self, function_name, params, timeout, source, agent_id=None):
         """统一的工具执行逻辑。
 
         Args:
@@ -798,6 +800,17 @@ class ToolDispatcherMixin(object):
 
         if not self._is_registered_tool(function_name):
             return self._make_unregistered_tool_payload(function_name, params, start, source)
+
+        if not is_tool_allowed_for_agent(agent_id, function_name):
+            payload = {
+                "status": "error",
+                "error_code": "TOOL_NOT_ALLOWED_FOR_AGENT",
+                "tool": function_name,
+                "agent_id": agent_id,
+                "message": u"当前助手无权调用该工具。",
+            }
+            self._audit(function_name, params, start, payload, source=source)
+            return payload
 
         if function_name == "check_3dmps_status":
             return self._check_3dmps_status(params, start, source)
@@ -826,7 +839,10 @@ class ToolDispatcherMixin(object):
         runner = SKILL_RUNNERS.get(function_name)
         if runner is not None:
             try:
-                result = runner.run(params)
+                if function_name == "kmrag_search":
+                    result = runner.run(params, env_overrides=agent_config._kmrag_runtime_env())
+                else:
+                    result = runner.run(params)
             except Exception as exc:
                 if is_timeout_error(exc):
                     payload = make_timeout_error_payload(function_name, exc)
@@ -868,7 +884,7 @@ class ToolDispatcherMixin(object):
         """
         return self._execute_tool_impl(function_name, params, timeout, source="api_tool")
 
-    def _execute_tool(self, name, args):
+    def _execute_tool(self, name, args, agent_id=None):
         """执行 LLM 请求的工具调用，转换为命名管道格式。
 
         通过 TOOL_PIPE_BUILDER 注册表批量映射工具参数，
@@ -879,7 +895,9 @@ class ToolDispatcherMixin(object):
         3DMPS 工具（TOOL_PIPE_BUILDER 中的）走命名管道分支，
         所有调用都写入审计日志（source=llm_chat）。
         """
-        return self._execute_tool_impl(name, args, timeout=None, source="llm_chat")
+        return self._execute_tool_impl(
+            name, args, timeout=None, source="llm_chat", agent_id=agent_id
+        )
 
     def _tool_result_is_error(self, result):
         if not isinstance(result, dict):

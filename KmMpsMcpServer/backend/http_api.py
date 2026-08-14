@@ -576,6 +576,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 "pipe_available": AGENT.pipe.is_available(),
                 "llm_enabled": agent_config._is_llm_config_enabled(agent_config.CONFIG),
                 "llm": agent_config._public_llm_config(),
+                "kmrag": agent_config._public_kmrag_config(),
                 "python": {
                     "executable": sys.executable,
                     "version": "%d.%d.%d" % sys.version_info[:3],
@@ -1224,4 +1225,3 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-

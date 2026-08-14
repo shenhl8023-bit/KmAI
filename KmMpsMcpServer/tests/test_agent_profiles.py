@@ -46,6 +46,18 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertIn("project-agent", agent_ids)
         self.assertIn("user-agent", agent_ids)
 
+    def test_kmrag_knowledge_agent_is_discovered_with_its_strict_prompt(self):
+        profiles = {
+            profile["id"]: profile
+            for profile in agent_profiles.list_agent_profiles()
+        }
+
+        self.assertEqual("kmrag-knowledge-agent", agent_profiles.KMRAG_AGENT_ID)
+        profile = profiles[agent_profiles.KMRAG_AGENT_ID]
+        self.assertEqual("KMRAG 知识助手", profile["name"])
+        self.assertIn("kmrag_search", profile["prompt"])
+        self.assertIn("不得调用 3DMPS", profile["prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@
 import {
   state, dom, escapeHtml, setStatus, addUserMsg,
   requestJson, ping, getStoredAgentId, setStoredAgentId,
-  PROCESS_AUTO_AGENT_ID, getTimeStr, getApiToken,
+  PROCESS_AUTO_AGENT_ID, KMRAG_AGENT_ID, getTimeStr, getApiToken,
 } from './shared.js';
 
 // 在 entry.js 里 setSelectedAgent 会调 addProcessWorkflowCard(workflow 模块提供),
@@ -128,10 +128,13 @@ export function setSelectedAgent(agentId, silent) {
       _showDefaultAssistantIntro();
     } else {
       dom.workflowDock.innerHTML = '';
-      dom.workflowDock.style.display = '';
+      dom.workflowDock.style.display = state.currentAgentId === KMRAG_AGENT_ID ? 'none' : '';
     }
   }
   dom.input.placeholder = '例如：读取当前BOF';
+  if (state.currentAgentId === KMRAG_AGENT_ID) {
+    dom.input.placeholder = '例如：查询公司的供应商准入流程';
+  }
   saveCurrentAgentLog();
 }
 

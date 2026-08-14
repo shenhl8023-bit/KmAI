@@ -54,6 +54,17 @@ process-route-generator/
 - `references/cad_reference/cad_feature_catalog.json`
   作用：CAD 特征规范表
 
+### 从 ProcessMind 手工替换
+
+ProcessMind 导出的规则包 ZIP 内包含 `kmai-v1/` 目录。停止 KmAI Agent 后，将其中以下四个文件复制到本目录的 `references/v1/` 并覆盖：
+
+- `factor_schema.json`
+- `factor_expansion_rules.json`
+- `route_catalog.json`
+- `route_rules.json`
+
+保留当前 `group_match_rules.json` 和 `references/cad_reference/cad_feature_catalog.json`。重新启动 Agent 后，`process_route_generate` 会直接加载替换后的规则文件。
+
 ## 4. 不建议直接替换的文件
 
 这些文件是程序逻辑层，除非要改算法，否则不要随意动：

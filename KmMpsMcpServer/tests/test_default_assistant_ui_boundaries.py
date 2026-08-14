@@ -6,6 +6,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DefaultAssistantUiBoundaryTest(unittest.TestCase):
+    def test_kmrag_agent_does_not_render_an_intro_panel(self):
+        chat_source = (ROOT / "frontend" / "assets" / "modules" / "chat.js").read_text(encoding="utf-8")
+        entry_source = (ROOT / "frontend" / "assets" / "modules" / "entry.js").read_text(encoding="utf-8")
+        workflow_source = (ROOT / "frontend" / "assets" / "modules" / "workflow.js").read_text(encoding="utf-8")
+
+        self.assertIn("state.currentAgentId === KMRAG_AGENT_ID", chat_source)
+        self.assertNotIn("showKmragKnowledgeIntro", chat_source)
+        self.assertNotIn("showKmragKnowledgeIntro", entry_source)
+        self.assertNotIn("showKmragKnowledgeIntro", workflow_source)
+        self.assertIn(
+            "dom.workflowDock.style.display = state.currentAgentId === KMRAG_AGENT_ID ? 'none' : '';",
+            chat_source,
+        )
+
     def test_default_intro_only_renders_for_default_agent(self):
         source = (ROOT / "frontend" / "assets" / "modules" / "chat.js").read_text(encoding="utf-8")
 

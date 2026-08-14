@@ -254,4 +254,3 @@ if (typeof window !== 'undefined') {
     },
   };
 }
-

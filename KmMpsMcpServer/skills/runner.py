@@ -346,7 +346,7 @@ class SkillRunner(object):
 
         return raw, stderr_data
 
-    def run(self, params):
+    def run(self, params, env_overrides=None):
         """执行 Skill action。
 
         入参 params: dict，来自 LLM 的 tool_call.function.arguments。
@@ -367,10 +367,12 @@ class SkillRunner(object):
 
         cmdline = self._build_cmdline(request)
         env = None
-        if self.env:
-            # 合并系统环境变量
+        if self.env or env_overrides:
             env = dict(os.environ)
-            env.update(self.env)
+            if self.env:
+                env.update(self.env)
+            if env_overrides:
+                env.update(env_overrides)
 
         try:
             proc = subprocess.Popen(

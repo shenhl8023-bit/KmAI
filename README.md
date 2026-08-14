@@ -197,6 +197,25 @@ temperature = 0.3
 
 留空 `api_key`（或保留占位符 `YOUR_API_KEY_HERE`）会自动降级为关键词匹配模式，界面顶部会提示「当前为关键词匹配模式」。
 
+### 6.5 配置 KMRAG 知识助手
+
+从助手下拉框选择“`KMRAG 知识助手`”后，可基于企业知识库检索记录回答问题。它与默认助手、工艺自动生成助手隔离：KMRAG 助手不调用 3DMPS 工具，其他助手也不会看到 KMRAG 检索工具。
+
+先复制 `config.example.ini` 为本机 `config.ini`，再在 `[KMRAG]` 中填写经授权的本机配置：
+
+```ini
+[KMRAG]
+enabled = true
+base_url = https://your-kmrag-api-root
+api_key =
+bearer_token =
+timeout = 30
+```
+
+`base_url` 是 KMRAG API 根地址，程序会请求其 `/api/v2/collections/search` 路径。`api_key` 优先于 `bearer_token`；二者任选其一。KMRAG 只做检索，仍需启用 `[LLM]` 才能将检索记录组织成自然语言答案。
+
+无命中时助手会明确提示；401/403 表示鉴权失败，连接失败或超时表示服务不可达。`/api/health` 仅返回 `enabled`、`configured` 和 `auth_mode`，不会探测远端服务或返回地址、Token、Key。已在聊天或截图中暴露的凭据必须撤销并轮换，不能写入源代码、样例、日志或提交。内网迁移时携带内置 `kmrag-search` Skill 和 `config.example.ini`，不要携带 `config.ini`、日志、缓存或外部目录链接。
+
 ---
 
 ## 7. HTTP API 一览

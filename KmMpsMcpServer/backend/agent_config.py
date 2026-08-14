@@ -4,6 +4,7 @@ from __future__ import print_function
 import configparser
 import os
 import sys
+from urllib.parse import urlparse
 
 CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "config.ini")
@@ -21,6 +22,11 @@ def _load_config():
         "model": "gpt-4o",
         "max_tokens": 4096,
         "temperature": 0.3,
+        "kmrag_enabled": False,
+        "kmrag_base_url": "",
+        "kmrag_api_key": "",
+        "kmrag_bearer_token": "",
+        "kmrag_timeout": 30,
         "group_template_dir": os.path.join(CONFIG_BASE_DIR, "..", "..", "Resources", "GroupTemplate"),
         "feature_template_file": os.path.join("..", "Resources", "FeatureTemplate", "FeatureTemplate.xml"),
         "autoidentify_with_direction_dir": os.path.join("..", "Resources", "AutoIdentifyWithDirection"),
@@ -47,6 +53,13 @@ def _load_config():
             config["feature_template_file"] = cp.get(
                 "Paths", "feature_template_file", fallback=config["feature_template_file"]
             )
+        if cp.has_section("KMRAG"):
+            enabled = cp.get("KMRAG", "enabled", fallback="false")
+            config["kmrag_enabled"] = enabled.strip().lower() in ("1", "true", "yes", "on")
+            config["kmrag_base_url"] = cp.get("KMRAG", "base_url", fallback="").strip().rstrip("/")
+            config["kmrag_api_key"] = cp.get("KMRAG", "api_key", fallback="").strip()
+            config["kmrag_bearer_token"] = cp.get("KMRAG", "bearer_token", fallback="").strip()
+            config["kmrag_timeout"] = cp.getint("KMRAG", "timeout", fallback=config["kmrag_timeout"])
     except Exception as exc:
         sys.stderr.write("[config] load error: %s\n" % exc)
     return config
@@ -77,6 +90,44 @@ def _public_llm_config():
         "api_key_masked": _mask_secret(CONFIG.get("api_key", "")),
         "config_path": os.path.abspath(CONFIG_PATH),
     }
+
+
+def _public_kmrag_config(config=None):
+    config = CONFIG if config is None else config
+    has_api_key = bool(config.get("kmrag_api_key"))
+    has_bearer_token = bool(config.get("kmrag_bearer_token"))
+    if has_api_key:
+        auth_mode = "api_key"
+    elif has_bearer_token:
+        auth_mode = "bearer_token"
+    else:
+        auth_mode = "none"
+    return {
+        "enabled": bool(config.get("kmrag_enabled")),
+        "configured": bool(config.get("kmrag_base_url")) and (has_api_key or has_bearer_token),
+        "auth_mode": auth_mode,
+    }
+
+
+def _kmrag_runtime_env(config=None):
+    config = CONFIG if config is None else config
+    base_url = str(config.get("kmrag_base_url", "")).strip()
+    host = urlparse(base_url).hostname if base_url else ""
+    runtime_env = {
+        "KMRAG_ENABLED": "true" if config.get("kmrag_enabled") else "false",
+        "KMRAG_BASE_URL": base_url,
+        "KMRAG_API_KEY": str(config.get("kmrag_api_key", "")),
+        "KMRAG_BEARER_TOKEN": str(config.get("kmrag_bearer_token", "")),
+        "KMRAG_TIMEOUT": str(config.get("kmrag_timeout", 30)),
+    }
+    if host:
+        for name in ("NO_PROXY", "no_proxy"):
+            existing = os.environ.get(name, "").strip()
+            entries = [item.strip() for item in existing.split(",") if item.strip()]
+            if host not in entries:
+                entries.append(host)
+            runtime_env[name] = ",".join(entries)
+    return runtime_env
 
 
 def _parse_int_field(data, name, default, min_value, max_value):

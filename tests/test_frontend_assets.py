@@ -87,6 +87,7 @@ class FrontendAssetsTests(unittest.TestCase):
         self.assertIn("_showDefaultAssistantIntro = deps.showDefaultAssistantIntro;", chat_js)
         self.assertIn("_showDefaultAssistantIntro", chat_js)
         self.assertIn("showDefaultAssistantIntro", entry_js)
+        self.assertNotIn("showKmragKnowledgeIntro", entry_js)
         self.assertIn("export function showDefaultAssistantIntro", workflow_js)
         self.assertIn("default-assistant-intro", workflow_js)
         self.assertIn(".default-assistant-intro", workflow_css)

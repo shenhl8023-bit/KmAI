@@ -9,6 +9,7 @@ from .prompts import SYSTEM_PROMPT
 
 
 DEFAULT_AGENT_ID = "default"
+KMRAG_AGENT_ID = "kmrag-knowledge-agent"
 DEFAULT_AGENT_NAME = u"\u9ed8\u8ba4\u52a9\u624b"
 DEFAULT_AGENT_DESCRIPTION = u"\u4f7f\u7528\u5185\u7f6e 3DMPS \u52a9\u624b\u63d0\u793a\u8bcd\u3002"
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))

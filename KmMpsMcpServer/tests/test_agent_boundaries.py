@@ -25,6 +25,71 @@ class FakeStreamingLlm(object):
 
 
 class AgentBoundaryTest(unittest.TestCase):
+    def test_kmrag_agent_only_receives_search_tool_and_refuses_without_tool_call(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm({
+            "choices": [{
+                "message": {"role": "assistant", "content": "未经检索的回答"},
+                "finish_reason": "stop",
+            }]
+        })
+
+        result = agent.chat(
+            "读取BOF",
+            session_id="kmrag-no-tool",
+            agent_id="kmrag-knowledge-agent",
+        )
+
+        self.assertEqual(["kmrag_search"], [
+            tool["function"]["name"] for tool in agent.llm.calls[0]["tools"]
+        ])
+        self.assertEqual("未执行知识库检索，无法基于企业知识库回答。", result["reply"])
+
+    def test_kmrag_agent_without_llm_does_not_use_keyword_fallback(self):
+        agent = MiniAgent()
+        agent.llm = None
+
+        result = agent.chat(
+            "读取BOF",
+            session_id="kmrag-no-llm",
+            agent_id="kmrag-knowledge-agent",
+        )
+
+        self.assertEqual("需要先启用 LLM 智能对话。", result["reply"])
+        self.assertIsNone(result["tool"])
+
+    def test_kmrag_empty_search_result_stops_before_second_llm_call(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "kmrag-call",
+                        "type": "function",
+                        "function": {"name": "kmrag_search", "arguments": "{\"query\": \"制度\"}"},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }]
+        })
+        calls = []
+
+        def fake_execute_tool(name, args, agent_id=None):
+            calls.append((name, args, agent_id))
+            return {"ok": True, "records": []}
+
+        agent._execute_tool = fake_execute_tool
+        result = agent.chat(
+            "查询制度",
+            session_id="kmrag-empty",
+            agent_id="kmrag-knowledge-agent",
+        )
+
+        self.assertEqual([("kmrag_search", {"query": "制度"}, "kmrag-knowledge-agent")], calls)
+        self.assertEqual("知识库未检索到相关内容。", result["reply"])
+        self.assertEqual(1, len(agent.llm.calls))
+
     def setUp(self):
         self._old_project_agents_dir = agent_profiles.PROJECT_AGENTS_DIR
         self._old_user_agents_dir = agent_profiles.USER_AGENTS_DIR
@@ -315,7 +380,7 @@ class AgentBoundaryTest(unittest.TestCase):
         )
         calls = []
 
-        def fake_execute_tool(name, args):
+        def fake_execute_tool(name, args, agent_id=None):
             calls.append((name, args))
             return {"status": "success", "data": {"items": []}}
 

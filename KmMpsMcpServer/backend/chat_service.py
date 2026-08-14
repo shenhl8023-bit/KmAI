@@ -4,11 +4,11 @@ from __future__ import print_function
 import json
 import re
 
-from .agent_profiles import DEFAULT_AGENT_ID
+from .agent_profiles import DEFAULT_AGENT_ID, KMRAG_AGENT_ID
 from .llm_client import _friendly_llm_exception
 from .pipe_client import PIPE_NAME
 from .prompts import SYSTEM_PROMPT
-from .tool_runtime import KEYWORD_RULES, TOOLS, get_timeout
+from .tool_runtime import KEYWORD_RULES, get_timeout, get_tools_for_agent
 
 
 class ChatServiceMixin(object):
@@ -335,15 +335,22 @@ class ChatServiceMixin(object):
 
         if self.llm:
             profile_id = profile.get("id", DEFAULT_AGENT_ID)
-            direct_keyword = self._direct_keyword_match(clean_message, agent_id=profile_id)
-            if direct_keyword:
-                return direct_keyword
-            direct_result = self._default_direct_query_match(clean_message, profile_id)
-            if direct_result:
-                return direct_result
+            if profile_id != KMRAG_AGENT_ID:
+                direct_keyword = self._direct_keyword_match(clean_message, agent_id=profile_id)
+                if direct_keyword:
+                    return direct_keyword
+                direct_result = self._default_direct_query_match(clean_message, profile_id)
+                if direct_result:
+                    return direct_result
 
         # 无 LLM：使用关键词匹配
         if not self.llm:
+            if profile.get("id") == KMRAG_AGENT_ID:
+                return {
+                    "reply": u"需要先启用 LLM 智能对话。",
+                    "tool": None,
+                    "result": None,
+                }
             return self._keyword_match(clean_message, agent_id=profile.get("id", DEFAULT_AGENT_ID))
 
         # 有 LLM：使用工具调用循环
@@ -383,30 +390,34 @@ class ChatServiceMixin(object):
 
         if self.llm:
             profile_id = profile.get("id", DEFAULT_AGENT_ID)
-            direct_keyword = self._direct_keyword_match(clean_message, agent_id=profile_id)
-            if direct_keyword:
-                if direct_keyword.get("tool"):
-                    yield {
-                        "type": "tool_call",
-                        "tool": direct_keyword.get("tool"),
-                        "args": direct_keyword.get("args", {}),
-                        "result": direct_keyword.get("result"),
-                    }
-                yield {"type": "content", "text": direct_keyword.get("reply", "")}
-                return
-            direct_result = self._default_direct_query_match(clean_message, profile_id)
-            if direct_result:
-                if direct_result.get("tool"):
-                    yield {
-                        "type": "tool_call",
-                        "tool": direct_result.get("tool"),
-                        "args": direct_result.get("args", {}),
-                        "result": direct_result.get("result"),
-                    }
-                yield {"type": "content", "text": direct_result.get("reply", "")}
-                return
+            if profile_id != KMRAG_AGENT_ID:
+                direct_keyword = self._direct_keyword_match(clean_message, agent_id=profile_id)
+                if direct_keyword:
+                    if direct_keyword.get("tool"):
+                        yield {
+                            "type": "tool_call",
+                            "tool": direct_keyword.get("tool"),
+                            "args": direct_keyword.get("args", {}),
+                            "result": direct_keyword.get("result"),
+                        }
+                    yield {"type": "content", "text": direct_keyword.get("reply", "")}
+                    return
+                direct_result = self._default_direct_query_match(clean_message, profile_id)
+                if direct_result:
+                    if direct_result.get("tool"):
+                        yield {
+                            "type": "tool_call",
+                            "tool": direct_result.get("tool"),
+                            "args": direct_result.get("args", {}),
+                            "result": direct_result.get("result"),
+                        }
+                    yield {"type": "content", "text": direct_result.get("reply", "")}
+                    return
 
         if not self.llm:
+            if profile.get("id") == KMRAG_AGENT_ID:
+                yield {"type": "content", "text": u"需要先启用 LLM 智能对话。"}
+                return
             result = self._keyword_match(clean_message, agent_id=profile.get("id", DEFAULT_AGENT_ID))
             if result.get("tool"):
                 yield {
@@ -419,6 +430,7 @@ class ChatServiceMixin(object):
             return
 
         agent_id = profile.get("id", DEFAULT_AGENT_ID)
+        agent_tools = get_tools_for_agent(agent_id)
         system_prompt = profile.get("prompt") or SYSTEM_PROMPT
         session_key = self._make_session_key(session_id, agent_id)
 
@@ -429,13 +441,14 @@ class ChatServiceMixin(object):
         messages.append({"role": "user", "content": clean_message})
 
         # 先做一轮工具调用判断（非流式）
-        yield self._stream_status(u"正在判断是否需要调用 3DMPS 工具...")
+        status_text = u"正在检索企业知识库..." if agent_id == KMRAG_AGENT_ID else u"正在判断是否需要调用 3DMPS 工具..."
+        yield self._stream_status(status_text)
         try:
-            resp = self.llm.chat(messages, tools=TOOLS, stream=False)
+            resp = self.llm.chat(messages, tools=agent_tools, stream=False)
         except Exception as exc:
             messages = self._reset_session(session_id, message, agent_id=agent_id, system_prompt=system_prompt)
             try:
-                resp = self.llm.chat(messages, tools=TOOLS, stream=False)
+                resp = self.llm.chat(messages, tools=agent_tools, stream=False)
             except Exception as retry_exc:
                 self._reset_session(session_id, agent_id=agent_id, system_prompt=system_prompt)
                 yield {"type": "error", "message": u"智能对话调用失败：%s" % _friendly_llm_exception(retry_exc)}
@@ -448,6 +461,11 @@ class ChatServiceMixin(object):
 
         msg = choices[0].get("message", {})
         tool_calls = msg.get("tool_calls")
+        if not tool_calls and agent_id == KMRAG_AGENT_ID:
+            reply = u"未执行知识库检索，无法基于企业知识库回答。"
+            messages.append({"role": "assistant", "content": reply})
+            yield {"type": "content", "text": reply}
+            return
         has_visible_tool_result = False
         visible_tool_reply = u"\u5df2\u8fd4\u56de\u7ed3\u679c\uff0c\u8bf7\u67e5\u770b\u4e0a\u65b9\u5361\u7247\u3002"
         tool_error_reply = None
@@ -463,7 +481,7 @@ class ChatServiceMixin(object):
                 except json.JSONDecodeError:
                     func_args = {}
                 yield self._stream_status(self._tool_stream_status_text(func_name))
-                tool_result = self._execute_tool(func_name, func_args)
+                tool_result = self._execute_tool(func_name, func_args, agent_id=agent_id)
                 if isinstance(tool_result, dict) and (tool_result.get("ui") or tool_result.get("candidates")):
                     has_visible_tool_result = True
                     if tool_result.get("save_result"):
@@ -495,6 +513,17 @@ class ChatServiceMixin(object):
                     "tool_call_id": tc.get("id", ""),
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 })
+                if agent_id == KMRAG_AGENT_ID:
+                    records = tool_result.get("records", []) if isinstance(tool_result, dict) else []
+                    if self._tool_result_is_error(tool_result):
+                        reply = tool_result.get("message", u"知识库检索失败。")
+                    elif not records:
+                        reply = u"知识库未检索到相关内容。"
+                    else:
+                        continue
+                    messages.append({"role": "assistant", "content": reply})
+                    yield {"type": "content", "text": reply}
+                    return
 
         if has_visible_tool_result:
             messages.append({"role": "assistant", "content": visible_tool_reply})

@@ -5,10 +5,10 @@ import json
 
 from . import agent_config as _config
 from .agent_config import LLM_MAX_TOOL_ITERATIONS
-from .agent_profiles import DEFAULT_AGENT_ID, get_agent_profile, resolve_agent_profile
+from .agent_profiles import DEFAULT_AGENT_ID, KMRAG_AGENT_ID, get_agent_profile, resolve_agent_profile
 from .llm_client import LLMClient, _friendly_llm_exception
 from .prompts import SYSTEM_PROMPT
-from .tool_runtime import TOOLS
+from .tool_runtime import get_tools_for_agent
 
 
 def create_initial_llm_client():
@@ -70,13 +70,14 @@ class LlmServiceMixin(object):
         messages.append({"role": "user", "content": message})
 
         tool_calls_log = []
+        agent_tools = get_tools_for_agent(agent_id)
         max_iterations = LLM_MAX_TOOL_ITERATIONS
 
         for iteration in range(max_iterations):
             # DeepSeek 特殊行为：当 messages 中已包含 tool 消息（第二轮起），
             # 同时传 tools=TOOLS 会触发 "tool must respond to preceding tool_calls" 校验错误。
             # 第二轮起改传 tools=None，让 LLM 基于 tool 结果直接给最终回答。
-            current_tools = TOOLS if iteration == 0 else None
+            current_tools = agent_tools if iteration == 0 else None
             try:
                 resp = self.llm.chat(messages, tools=current_tools)
             except Exception as exc:
@@ -111,6 +112,12 @@ class LlmServiceMixin(object):
             # 检查是否有 tool_calls
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
+                if agent_id == KMRAG_AGENT_ID:
+                    return {
+                        "reply": u"未执行知识库检索，无法基于企业知识库回答。",
+                        "tool": None,
+                        "result": None,
+                    }
                 # 直接回答
                 content = msg.get("content", "")
                 messages.append(dict(msg))
@@ -131,7 +138,7 @@ class LlmServiceMixin(object):
                 except json.JSONDecodeError:
                     func_args = {}
 
-                tool_result = self._execute_tool(func_name, func_args)
+                tool_result = self._execute_tool(func_name, func_args, agent_id=agent_id)
                 tool_calls_log.append({
                     "tool": func_name,
                     "args": func_args,
@@ -143,6 +150,23 @@ class LlmServiceMixin(object):
                     "tool_call_id": tc.get("id", ""),
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 })
+
+                if agent_id == KMRAG_AGENT_ID:
+                    records = tool_result.get("records", []) if isinstance(tool_result, dict) else []
+                    if self._tool_result_is_error(tool_result):
+                        reply = tool_result.get("message", u"知识库检索失败。")
+                    elif not records:
+                        reply = u"知识库未检索到相关内容。"
+                    else:
+                        continue
+                    messages.append({"role": "assistant", "content": reply})
+                    return {
+                        "reply": reply,
+                        "tool": func_name,
+                        "args": func_args,
+                        "result": tool_result,
+                        "status": "error" if self._tool_result_is_error(tool_result) else "success",
+                    }
 
                 if self._tool_result_is_error(tool_result):
                     reply = self._tool_error_reply(func_name, tool_result)

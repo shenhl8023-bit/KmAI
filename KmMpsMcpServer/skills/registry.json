@@ -3,6 +3,7 @@
   "skills": [
     "kmsoft-group-template",
     "process-route-generator",
-    "technical-requirements-generator"
+    "technical-requirements-generator",
+    "kmrag-search"
   ]
 }

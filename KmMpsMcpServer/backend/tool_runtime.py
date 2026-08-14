@@ -15,6 +15,7 @@ from skills import (
     get_runtime_diagnostics as get_skill_runtime_diagnostics,
     get_skill_timeout,
 )
+from .agent_profiles import KMRAG_AGENT_ID
 
 HIDDEN_3DMPS_TOOLS = frozenset([
     "get_cur_model_info",
@@ -56,6 +57,7 @@ def _is_public_tool(tool):
 
 
 TOOLS = [tool for tool in BASE_TOOLS if _is_public_tool(tool)] + list(SKILL_TOOLS)
+KMRAG_TOOL_NAME = "kmrag_search"
 KEYWORD_RULES = [
     rule for rule in KEYWORD_RULES
     if rule.get("tool") not in HIDDEN_3DMPS_TOOLS
@@ -68,3 +70,17 @@ def get_timeout(name, default=None):
     if name in SKILL_TIMEOUTS:
         return SKILL_TIMEOUTS[name]
     return base_get_timeout(name, default)
+
+
+def get_tools_for_agent(agent_id):
+    if agent_id == KMRAG_AGENT_ID:
+        return [tool for tool in TOOLS if _tool_name(tool) == KMRAG_TOOL_NAME]
+    return [tool for tool in TOOLS if _tool_name(tool) != KMRAG_TOOL_NAME]
+
+
+def is_tool_allowed_for_agent(agent_id, tool_name):
+    if agent_id is None:
+        return True
+    if agent_id == KMRAG_AGENT_ID:
+        return tool_name == KMRAG_TOOL_NAME
+    return tool_name != KMRAG_TOOL_NAME

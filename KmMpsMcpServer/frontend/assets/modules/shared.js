@@ -12,6 +12,7 @@
 
 // 工艺路线自动生成智能体的固定 ID,后端识别后才会把工作流 dock 显示出来。
 export const PROCESS_AUTO_AGENT_ID = 'process-auto-generate-agent';
+export const KMRAG_AGENT_ID = 'kmrag-knowledge-agent';
 
 // localStorage 里存的智能体选择,浏览器关掉再开还能记得上次的智能体。
 const AGENT_STORAGE_KEY = 'km-mps-agent-id';
