@@ -56,6 +56,103 @@ if (shared.dom.workflowDock.style.display !== '') {{
 
         self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_process_auto_agent_disables_manual_chat_input(self):
+        node_executable = shutil.which("node")
+        if not node_executable:
+            self.skipTest("Node.js is required for the frontend behavior test")
+
+        chat_uri = (ROOT / "frontend" / "assets" / "modules" / "chat.js").as_uri()
+        shared_uri = (ROOT / "frontend" / "assets" / "modules" / "shared.js").as_uri()
+        script = f"""
+const chat = await import({json.dumps(chat_uri)});
+const shared = await import({json.dumps(shared_uri)});
+shared.dom.agentSelect = {{
+  options: [
+    {{ value: 'default', text: '默认助手' }},
+    {{ value: 'process-auto-generate-agent', text: '工艺自动生成智能体' }},
+  ],
+  selectedIndex: 0,
+  get value() {{ return this.options[this.selectedIndex].value; }},
+}};
+shared.dom.input = {{ disabled: false, placeholder: '', focus() {{}} }};
+shared.dom.sendBtn = {{ disabled: false }};
+shared.dom.workflowDock = {{ innerHTML: '', style: {{ display: '' }} }};
+shared.dom.log = {{ innerHTML: '', scrollTop: 0, scrollHeight: 0 }};
+
+chat.setSelectedAgent('process-auto-generate-agent', true);
+if (shared.dom.input.placeholder !== '当前工作流无需输入') {{
+  throw new Error(`unexpected process auto placeholder: ${{shared.dom.input.placeholder}}`);
+}}
+if (!shared.dom.input.disabled) {{
+  throw new Error('process auto agent left the input enabled');
+}}
+if (!shared.dom.sendBtn.disabled) {{
+  throw new Error('process auto agent left the send button enabled');
+}}
+
+chat.setSelectedAgent('default', true);
+if (shared.dom.input.disabled) {{
+  throw new Error('default agent left the input disabled');
+}}
+if (shared.dom.sendBtn.disabled) {{
+  throw new Error('default agent left the send button disabled');
+}}
+"""
+
+        result = subprocess.run(
+            [node_executable, "--input-type=module", "--eval", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_process_workflow_send_keeps_manual_send_button_disabled(self):
+        node_executable = shutil.which("node")
+        if not node_executable:
+            self.skipTest("Node.js is required for the frontend behavior test")
+
+        chat_uri = (ROOT / "frontend" / "assets" / "modules" / "chat.js").as_uri()
+        shared_uri = (ROOT / "frontend" / "assets" / "modules" / "shared.js").as_uri()
+        script = f"""
+globalThis.window = {{ __KMAI_API_TOKEN__: '' }};
+globalThis.document = {{
+  createElement() {{
+    const bubble = {{ className: 'bubble', innerHTML: '' }};
+    return {{
+      className: '',
+      innerHTML: '',
+      querySelector(selector) {{ return selector === '.bubble' ? bubble : null; }},
+    }};
+  }},
+}};
+const chat = await import({json.dumps(chat_uri)});
+const shared = await import({json.dumps(shared_uri)});
+shared.state.currentAgentId = shared.PROCESS_AUTO_AGENT_ID;
+shared.dom.input = {{ disabled: true, value: '', placeholder: '', focus() {{}} }};
+shared.dom.sendBtn = {{ disabled: true }};
+shared.dom.log = {{ appendChild() {{}}, scrollTop: 0, scrollHeight: 0 }};
+shared.dom.status = null;
+globalThis.fetch = async function() {{ throw new Error('expected test failure'); }};
+
+await chat.sendProcessWorkflowPrompt('自动工作流提示');
+if (!shared.dom.sendBtn.disabled) {{
+  throw new Error('workflow send re-enabled the manual send button');
+}}
+"""
+
+        result = subprocess.run(
+            [node_executable, "--input-type=module", "--eval", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_default_intro_only_renders_for_default_agent(self):
         source = (ROOT / "frontend" / "assets" / "modules" / "chat.js").read_text(encoding="utf-8")
 

@@ -21,6 +21,7 @@ let _addProcessWorkflowCard = null;
 let _showProcessAutoWorkflow = null;
 let _showDefaultAssistantIntro = null;
 let _resetProcessRoutePanelFlowState = null;
+let _chatRequestInFlight = false;
 
 export function setChatDeps(deps) {
   _addProcessWorkflowCard = deps.addProcessWorkflowCard;
@@ -84,6 +85,20 @@ function restoreAgentLog(agentId) {
   return true;
 }
 
+function syncManualChatInputState() {
+  const manualInputDisabled = state.currentAgentId === PROCESS_AUTO_AGENT_ID;
+  dom.input.disabled = manualInputDisabled;
+  dom.sendBtn.disabled = manualInputDisabled || _chatRequestInFlight;
+
+  if (manualInputDisabled) {
+    dom.input.placeholder = '当前工作流无需输入';
+  } else if (state.currentAgentId === KMRAG_AGENT_ID) {
+    dom.input.placeholder = '例如：自动识别怎么使用';
+  } else {
+    dom.input.placeholder = '例如：读取当前BOF';
+  }
+}
+
 /**
  * 切换智能体。这是模块化后唯一一份定义(以前 IIFE 里同一函数有两次,
  * 后一次覆盖前一次;模块化后这个隐患自然消失)。
@@ -131,10 +146,7 @@ export function setSelectedAgent(agentId, silent) {
       dom.workflowDock.style.display = state.currentAgentId === KMRAG_AGENT_ID ? 'none' : '';
     }
   }
-  dom.input.placeholder = '例如：读取当前BOF';
-  if (state.currentAgentId === KMRAG_AGENT_ID) {
-    dom.input.placeholder = '例如：自动识别怎么使用';
-  }
+  syncManualChatInputState();
   saveCurrentAgentLog();
 }
 
@@ -176,7 +188,7 @@ export function quick(text) {
  *  4. **tool_call 旁路渲染**:JSON 里遇到 `tool_call` 类型时由 tool_call.js
  *     渲染为可视化卡片(候选 / XML 编辑器),不混入文本气泡。
  *  5. **错误兜底**:HTTP 4xx/5xx、JSON 解析失败、error 类型消息都会被
- *     捕获并显示在气泡里(红字);sendBtn 无论如何都会被 finally 块重新启用。
+ *     捕获并显示在气泡里(红字);finally 块会按当前智能体恢复输入控件状态。
  *  6. **完成时 ping**:成功后重新调一次 `/api/health` 刷新顶栏 LLM 状态显示。
  *
  * @returns {Promise<boolean>} true=成功收到回复,false=空消息/出错
@@ -188,7 +200,8 @@ export async function send() {
     return false;
   }
   dom.input.value = '';
-  dom.sendBtn.disabled = true;
+  _chatRequestInFlight = true;
+  syncManualChatInputState();
   addUserMsg(message);
   console.log('[send] POST /api/chat/stream, message:', message);
 
@@ -326,7 +339,8 @@ export async function send() {
     if (reader) {
       try { reader.releaseLock(); } catch (e) { /* ignore */ }
     }
-    dom.sendBtn.disabled = false;
-    dom.input.focus();
+    _chatRequestInFlight = false;
+    syncManualChatInputState();
+    if (!dom.input.disabled) dom.input.focus();
   }
 }
