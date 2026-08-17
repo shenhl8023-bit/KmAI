@@ -403,7 +403,9 @@ export function showDefaultAssistantIntro() {
 }
 
 export function showProcessAutoWorkflow() {
-  if (!dom.workflowDock || !dom.workflowDock.querySelector('.process-workflow-msg')) {
+  if (!dom.workflowDock) return;
+  dom.workflowDock.style.display = '';
+  if (!dom.workflowDock.querySelector('.process-workflow-msg')) {
     addProcessWorkflowCard();
   } else {
     updateProcessWorkflowCards();

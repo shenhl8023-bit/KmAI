@@ -1,3 +1,6 @@
+import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -19,6 +22,39 @@ class DefaultAssistantUiBoundaryTest(unittest.TestCase):
             "dom.workflowDock.style.display = state.currentAgentId === KMRAG_AGENT_ID ? 'none' : '';",
             chat_source,
         )
+
+    def test_process_workflow_show_restores_hidden_dock(self):
+        node_executable = shutil.which("node")
+        if not node_executable:
+            self.skipTest("Node.js is required for the frontend behavior test")
+
+        workflow_uri = (ROOT / "frontend" / "assets" / "modules" / "workflow.js").as_uri()
+        shared_uri = (ROOT / "frontend" / "assets" / "modules" / "shared.js").as_uri()
+        script = f"""
+const workflow = await import({json.dumps(workflow_uri)});
+const shared = await import({json.dumps(shared_uri)});
+shared.dom.workflowDock = {{
+  style: {{ display: 'none' }},
+  querySelector(selector) {{
+    return selector === '.process-workflow-msg' ? {{}} : null;
+  }},
+  querySelectorAll() {{ return []; }},
+}};
+workflow.showProcessAutoWorkflow();
+if (shared.dom.workflowDock.style.display !== '') {{
+  throw new Error(`workflow dock remained ${{shared.dom.workflowDock.style.display}}`);
+}}
+"""
+
+        result = subprocess.run(
+            [node_executable, "--input-type=module", "--eval", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
 
     def test_default_intro_only_renders_for_default_agent(self):
         source = (ROOT / "frontend" / "assets" / "modules" / "chat.js").read_text(encoding="utf-8")
