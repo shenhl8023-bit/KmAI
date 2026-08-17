@@ -133,7 +133,7 @@ export function setSelectedAgent(agentId, silent) {
   }
   dom.input.placeholder = '例如：读取当前BOF';
   if (state.currentAgentId === KMRAG_AGENT_ID) {
-    dom.input.placeholder = '例如：查询公司的供应商准入流程';
+    dom.input.placeholder = '例如：自动识别怎么使用';
   }
   saveCurrentAgentLog();
 }
