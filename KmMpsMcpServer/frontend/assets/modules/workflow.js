@@ -763,8 +763,9 @@ export async function runProcessGroupTemplateAutoStep() {
 }
 
 export async function runProcessAutoIdentifyAutoStep() {
-  runProcessAutoIdentifySelection();
-  await waitForProcessWorkflowStepDone('auto_identify_template', 60000);
+  // 前置检查失败时让 reject 直接向上抛，使一键执行循环立即停止；
+  // 避免旧循环仍挂在 waitForProcessWorkflowStepDone 上，重跑时与新循环并发触发第 3 步。
+  await runProcessAutoIdentifySelection();
   return true;
 }
 
