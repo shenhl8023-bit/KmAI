@@ -322,12 +322,13 @@ class AgentBoundaryTest(unittest.TestCase):
         self.assertIn("特征节点共", events[2]["text"])
         self.assertNotIn("BOF/特征树结构", events[2]["text"])
 
-    def test_stream_chat_emits_status_before_tool_decision_and_final_content(self):
+    def test_stream_chat_reuses_first_pass_answer_in_single_call(self):
+        # 普通流式聊天：首轮已判定无需工具，应复用本轮回答，仅发一次模型请求。
         agent = MiniAgent()
         agent.llm = FakeStreamingLlm(
             {
                 "choices": [{
-                    "message": {"role": "assistant", "content": "ignored first pass"},
+                    "message": {"role": "assistant", "content": "你好，有什么可以帮你？"},
                     "finish_reason": "stop",
                 }]
             },
@@ -347,14 +348,98 @@ class AgentBoundaryTest(unittest.TestCase):
             [
                 ("status", "正在理解问题..."),
                 ("status", "正在判断是否需要调用 3DMPS 工具..."),
-                ("status", "正在组织回复..."),
-                ("content", "第一段"),
-                ("content", "第二段"),
+                ("content", "你好，有什么可以帮你？"),
             ],
             [(event["type"], event.get("text", "")) for event in events],
         )
+        # 普通聊天应只调用模型一次，且为非流式的工具判断轮。
+        self.assertEqual(1, len(agent.llm.calls))
+        self.assertEqual(False, agent.llm.calls[0]["stream"])
+
+    def test_stream_chat_preserves_first_pass_reasoning_in_history(self):
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm(
+            {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "推理后回答",
+                        "reasoning_content": "思考过程",
+                    },
+                    "finish_reason": "stop",
+                }]
+            },
+        )
+
+        events = list(agent.stream_chat(
+            "解释一下",
+            session_id="reasoning-session",
+            agent_id="default",
+        ))
+
+        self.assertEqual(
+            [
+                ("status", "正在理解问题..."),
+                ("status", "正在判断是否需要调用 3DMPS 工具..."),
+                ("content", "推理后回答"),
+            ],
+            [(event["type"], event.get("text", "")) for event in events],
+        )
+        session_key = agent._make_session_key("reasoning-session", "default")
+        history = agent.conversations.get_or_init(
+            session_key, lambda: [{"role": "system", "content": ""}]
+        )
+        assistant_msgs = [m for m in history if m.get("role") == "assistant"]
+        self.assertEqual(1, len(assistant_msgs))
+        self.assertEqual("推理后回答", assistant_msgs[0].get("content"))
+        self.assertEqual("思考过程", assistant_msgs[0].get("reasoning_content"))
+
+    def test_stream_chat_with_tool_call_still_uses_two_calls(self):
+        # 工具调用场景仍应发两次请求：首轮非流式工具判断 + 第二轮流式最终回答。
+        agent = MiniAgent()
+        agent.llm = FakeStreamingLlm(
+            {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_bof_tree",
+                                "arguments": "{}",
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }]
+            },
+            final_chunks=[{"content": "读取完成", "reasoning_content": ""}],
+        )
+        calls = []
+
+        def fake_execute_tool(name, args, agent_id=None):
+            calls.append((name, args))
+            return {"status": "success", "data": {"items": []}}
+
+        agent._execute_tool = fake_execute_tool
+
+        events = list(agent.stream_chat(
+            "请根据当前上下文处理模型数据",
+            session_id="tool-two-calls-session",
+            agent_id="default",
+        ))
+
+        # 仍为双调用：首轮非流式工具判断，第二轮流式最终回答。
+        self.assertEqual(2, len(agent.llm.calls))
         self.assertEqual(False, agent.llm.calls[0]["stream"])
         self.assertEqual(True, agent.llm.calls[1]["stream"])
+        # 工具被执行，最终回答来自第二轮流式内容。
+        self.assertEqual([("get_bof_tree", {})], calls)
+        self.assertEqual("tool_call", events[3]["type"])
+        self.assertEqual("content", events[5]["type"])
+        self.assertEqual("读取完成", events[5]["text"])
 
     def test_stream_chat_emits_status_before_executing_tool(self):
         agent = MiniAgent()

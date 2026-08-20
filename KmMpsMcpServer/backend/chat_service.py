@@ -461,9 +461,17 @@ class ChatServiceMixin(object):
 
         msg = choices[0].get("message", {})
         tool_calls = msg.get("tool_calls")
-        if not tool_calls and agent_id == KMRAG_AGENT_ID:
-            reply = u"未执行知识库检索，无法基于企业知识库回答。"
-            messages.append({"role": "assistant", "content": reply})
+        if not tool_calls:
+            # 首轮已判定无需工具：直接复用本轮回答，避免再发一次流式请求。
+            if agent_id == KMRAG_AGENT_ID:
+                reply = u"未执行知识库检索，无法基于企业知识库回答。"
+            else:
+                reply = msg.get("content", "") or ""
+            assistant_msg = {"role": "assistant", "content": reply}
+            reasoning = msg.get("reasoning_content")
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
+            messages.append(assistant_msg)
             yield {"type": "content", "text": reply}
             return
         has_visible_tool_result = False
